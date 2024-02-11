@@ -1,5 +1,4 @@
 from http import HTTPStatus
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -10,7 +9,7 @@ import requests
 
 from core.config.env import Env
 from core.errors.database import DocumentNotFoundError
-from core.models.organization import OrganizationCreate
+from core.models.organization import OrganizationCreate, OrganizationUpdate
 from core.services.organization import OrganizationService
 
 
@@ -42,10 +41,8 @@ def create_organization(data: OrganizationCreate, token: HTTPAuthorizationCreden
                     # Pass organization details to Authentication service
                     organizations = service.read_all(member_id=owner_id)
                     for organization in organizations:
-                        for organization in organizations:
-                            organization.id = str(organization.id)
-                            organization.ownerId = str(organization.ownerId)
-                            organization.memberId = str(organization.memberId)
+                        organization.id = str(organization.id)
+                        organization.ownerId = str(organization.ownerId)
                         json_data['organizations'].append(
                             organization.model_dump())
 
@@ -72,7 +69,6 @@ def create_organization(data: OrganizationCreate, token: HTTPAuthorizationCreden
     except InvalidTokenError as e:
         raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
                             'message': f'{e.detail}'})
-    
 
 
 @organization.get('/')
@@ -80,12 +76,12 @@ def create_organization(data: OrganizationCreate, token: HTTPAuthorizationCreden
 def read_organization(organization_id: PydanticObjectId, token: HTTPAuthorizationCredentials = Security(bearer)):
     try:
         payload = token_manager.decode_token(token=token.credentials)
-        owner_id = str(payload['sub'])
+        member_id = str(payload['sub'])
         scope = str(payload['scope'])
         if 'access_token' in scope.split():
             try:
                 organization = service.read(
-                    owner_id=owner_id, organization_id=organization_id)
+                    member_id=member_id, organization_id=organization_id)
                 return organization
 
             except DocumentNotFoundError:
@@ -94,9 +90,15 @@ def read_organization(organization_id: PydanticObjectId, token: HTTPAuthorizatio
             except HTTPException:
                 raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail={
                                     'message': 'Invalid request'})
-    except HTTPException:
-        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail={
-            'message': 'Unauthorized access or Insufficient scope'})
+        else:
+            raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail={
+                'message': 'Unauthorized access or Insufficient scope'})
+    except ExpiredTokenError as e:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
+                            'message': f'{e.detail}'})
+    except InvalidTokenError as e:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
+                            'message': f'{e.detail}'})
 
 
 @organization.get('/all/')
@@ -117,18 +119,114 @@ def read_organizations(token: HTTPAuthorizationCredentials = Security(bearer)):
             except HTTPException:
                 raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail={
                                     'message': 'Invalid request'})
-    except HTTPException:
-        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail={
-            'message': 'Unauthorized access or Insufficient scope'})
+    except ExpiredTokenError as e:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
+                            'message': f'{e.detail}'})
+    except InvalidTokenError as e:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
+                            'message': f'{e.detail}'})
 
 
-@organization.put('/')
+@organization.put('/{organization_id}')
 # Update organization instance
-def update_organization(token: HTTPAuthorizationCredentials = Security(bearer)):
-    pass
+def update_organization(organization_id: PydanticObjectId, data: OrganizationUpdate, token: HTTPAuthorizationCredentials = Security(bearer)):
+    try:
+        payload = token_manager.decode_token(token=token.credentials)
+        owner_id = str(payload['sub'])
+        scope = str(payload['scope'])
+        if 'access_token' in scope.split():
+            try:
+                data = service.update(owner_id=owner_id, organization_id=str(
+                    organization_id), data=data)
+                try:
+                    # Set up request headers
+                    headers = {'Authorization': f'Bearer {token.credentials}'}
+
+                    json_data = {}
+                    json_data['organizations'] = []
+
+                    # Pass organization details to Authentication service
+                    organizations = service.read_all(member_id=owner_id)
+                    for organization in organizations:
+                        organization.id = str(organization.id)
+                        organization.ownerId = str(organization.ownerId)
+                        json_data['organizations'].append(
+                            organization.model_dump())
+
+                    response = requests.put(url=f'{env.AUTHENTICATION_SERVICE_URL}auth/',
+                                            json=json_data,
+                                            headers=headers)
+
+                    if response.status_code == HTTPStatus.OK:
+                        return data
+
+                except HTTPException:
+                    raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail={
+                                        'message': 'Internal Server Error'})
+
+            except HTTPException:
+                raise HTTPException(
+                    status_code=HTTPStatus.BAD_REQUEST, detail={'message': 'Invalid request'})
+        else:
+            raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail={
+                                'message': 'Unauthorized access or Insufficient scope'})
+    except ExpiredTokenError as e:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
+                            'message': f'{e.detail}'})
+    except InvalidTokenError as e:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
+                            'message': f'{e.detail}'})
 
 
-@organization.delete('/')
+@organization.delete('/{organization_id}')
 # Delete organization instance
-def delete_organization(token: HTTPAuthorizationCredentials = Security(bearer)):
-    pass
+def delete_organization(organization_id: PydanticObjectId, token: HTTPAuthorizationCredentials = Security(bearer)):
+    try:
+        payload = token_manager.decode_token(token=token.credentials)
+        owner_id = str(payload['sub'])
+        scope = str(payload['scope'])
+        if 'access_token' in scope.split():
+            try:
+                service.delete(owner_id=owner_id,
+                               organization_id=str(organization_id))
+                try:
+                    # Set up request headers
+                    headers = {'Authorization': f'Bearer {token.credentials}'}
+
+                    json_data = {}
+                    json_data['organizations'] = []
+
+                    # Pass organization details to Authentication service
+                    organizations = service.read_all(member_id=owner_id)
+                    for organization in organizations:
+                        organization.id = str(organization.id)
+                        organization.ownerId = str(organization.ownerId)
+                        json_data['organizations'].append(
+                            organization.model_dump())
+
+                    response = requests.put(url=f'{env.AUTHENTICATION_SERVICE_URL}auth/',
+                                            json=json_data,
+                                            headers=headers)
+
+                    if response.status_code == HTTPStatus.OK:
+                        return {"message": "Organization deleted successfully"}
+
+                except HTTPException:
+                    raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail={
+                                        'message': 'Internal Server Error'})
+
+            except DocumentNotFoundError:
+                raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail={
+                                    'message': 'Organization not found'})
+            except HTTPException:
+                raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail={
+                                    'message': 'Invalid request'})
+        else:
+            raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail={
+                                'message': 'Unauthorized access or Insufficient scope'})
+    except ExpiredTokenError as e:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
+                            'message': f'{e.detail}'})
+    except InvalidTokenError as e:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail={
+                            'message': f'{e.detail}'})

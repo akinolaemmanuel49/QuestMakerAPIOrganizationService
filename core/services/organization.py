@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from bson import ObjectId
+from pymongo import ReturnDocument
 from quest_maker_api_shared_library.custom_types import PydanticObjectId
 
 
@@ -22,7 +23,6 @@ class OrganizationService:
                 name=data.name,
                 description=data.description,
                 ownerId=str(owner_id),
-                memberId=str(owner_id),
                 createdAt=str(datetime.utcnow()),
                 updatedAt=str(datetime.utcnow())
             )
@@ -32,50 +32,57 @@ class OrganizationService:
 
             # Create new organization instance in database collection
             document = db.organization_collection.insert_one(organization_dict)
+            db.organization_member_collection.insert_one(
+                {'ownerId': ObjectId(owner_id), 'memberId': ObjectId(owner_id), 'organizationId': ObjectId(str(document.inserted_id))})
 
             return str(document.inserted_id)
 
         except Exception as e:
             raise e
 
-    def read(self, owner_id: Optional[PydanticObjectId], member_id: Optional[PydanticObjectId], organization_id: PydanticObjectId) -> OrganizationResponse:
+    def read(self, member_id: Optional[PydanticObjectId], organization_id: PydanticObjectId) -> OrganizationResponse:
         try:
-            if owner_id:
-                document = db.organization_collection.find_one(
-                    {'_id': ObjectId(organization_id), 'ownerId': ObjectId(owner_id)})
             if member_id:
-                document = db.organization_collection.find_one(
-                    {'_id': ObjectId(organization_id), 'memberId': ObjectId(member_id)})
-            if document is None:
-                raise DocumentNotFoundError
+                association_document = db.organization_member_collection.find_one(
+                    {'member_id': ObjectId(member_id), 'organization_id': ObjectId(organization_id)})
+                if association_document:
+                    document = db.organization_collection.find_one(
+                        {'_id': ObjectId(organization_id), 'memberId': ObjectId(member_id)})
+                elif association_document is None:
+                    raise DocumentNotFoundError
             # Convert ObjectId's to strings
             document['_id'] = str(document['_id'])
             document['ownerId'] = str(document['ownerId'])
-            document['memberId'] = str(document['memberId'])
             return document
         except Exception as e:
             raise e
 
     def read_all(self, member_id: PydanticObjectId) -> List[OrganizationResponse]:
         try:
-            documents = db.organization_collection.find(
+            association_documents = db.organization_member_collection.find(
                 {'memberId': ObjectId(member_id)})
+
+            organization_ids = []
             result = []
 
-            if documents is None:
-                raise DocumentNotFoundError
-            for document in documents:
-                # Load result into OrganizationResponse container
-                document = OrganizationResponse(
-                    _id=str(document['_id']),
-                    name=document['name'],
-                    description=document['description'],
-                    ownerId=str(document['ownerId']),
-                    memberId=str(document['memberId']),
-                    createdAt=document['createdAt'],
-                    updatedAt=document['updatedAt']
-                )
-                result.append(document)
+            for association_document in association_documents:
+                organization_ids.append(
+                    str(association_document['organizationId']))
+
+            for organization_id in organization_ids:
+                document = db.organization_collection.find_one(
+                    {'_id': ObjectId(organization_id)})
+                if document:
+                    # Load result into OrganizationResponse container
+                    document = OrganizationResponse(
+                        _id=str(document['_id']),
+                        name=document['name'],
+                        description=document['description'],
+                        ownerId=str(document['ownerId']),
+                        createdAt=document['createdAt'],
+                        updatedAt=document['updatedAt']
+                    )
+                    result.append(document)
             return result
 
         except Exception as e:
@@ -89,8 +96,21 @@ class OrganizationService:
             # Update and convert date in updatedAt field to string
             data['updatedAt'] = str(datetime.utcnow())
             # Find and update an organization instance
-            db.organization_collection.update_one(
-                {'_id': ObjectId(organization_id), 'ownerId': ObjectId(owner_id)}, {'$set': data})
+            document = db.organization_collection.find_one_and_update(
+                {'_id': ObjectId(organization_id), 'ownerId': ObjectId(owner_id)}, {'$set': data}, return_document=ReturnDocument.AFTER)
+            if document:
+                # Load result into OrganizationResponse container
+                document = OrganizationResponse(
+                    _id=str(document['_id']),
+                    name=document['name'],
+                    description=document['description'],
+                    ownerId=str(document['ownerId']),
+                    createdAt=document['createdAt'],
+                    updatedAt=document['updatedAt']
+                )
+                return document
+            else:
+                raise DocumentNotFoundError
         except Exception as e:
             raise e
 
@@ -98,6 +118,8 @@ class OrganizationService:
         try:
             # Delete an organization instance using it's id and owner_id
             db.organization_collection.delete_one(
-                {"_id": ObjectId(organization_id), 'ownerId': ObjectId(owner_id)})
+                {'_id': ObjectId(organization_id), 'ownerId': ObjectId(owner_id)})
+            db.organization_member_collection.delete_many(
+                {'ownerId': ObjectId(owner_id), 'organizationId': ObjectId(organization_id)})
         except Exception as e:
             raise e

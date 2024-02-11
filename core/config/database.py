@@ -16,5 +16,5 @@ class OrganizationDatabase:
     # Set the collection name to 'organization'
     organization_collection = db['organization']
 
-    # # Set the collection name to 'organization_member'
-    # organization_member_collection = db['organization_member']
+    # Set the collection name to 'organization_member'
+    organization_member_collection = db['organization_member']
