@@ -10,7 +10,9 @@ import requests
 from core.config.env import Env
 from core.errors.database import DocumentNotFoundError
 from core.models.organization import OrganizationCreate, OrganizationUpdate
+from core.models.roles import RoleAssignedInDB
 from core.services.organization import OrganizationService
+from core.utils.managers.roles import RoleManager
 
 
 organization = APIRouter()
@@ -19,6 +21,7 @@ service = OrganizationService()
 env = Env()
 token_manager = TokenManager(key=env.JWT_SECRET_KEY.get_secret_value(),
                              jwt_expiration_time_in_minutes=env.JWT_EXPIRATION_TIME_IN_MINUTES,)
+role_manager = RoleManager()
 
 
 @organization.post('/')
@@ -30,13 +33,18 @@ def create_organization(data: OrganizationCreate, token: HTTPAuthorizationCreden
         scope = str(payload['scope'])
         if 'access_token' in scope.split():
             try:
-                id = service.create(owner_id=owner_id, data=data)
+                organization_id = service.create(owner_id=owner_id, data=data)
+                role_ids = role_manager.setup(organization_id=organization_id)
+                if role_ids:
+                    role_manager.assign_role(data=RoleAssignedInDB(
+                        toId=owner_id, organizationId=organization_id, roleId=role_ids[0]))
                 try:
                     # Set up request headers
                     headers = {'Authorization': f'Bearer {token.credentials}'}
 
                     json_data = {}
                     json_data['organizations'] = []
+                    json_data['roles'] = []
 
                     # Pass organization details to Authentication service
                     organizations = service.read_all(member_id=owner_id)
@@ -46,12 +54,19 @@ def create_organization(data: OrganizationCreate, token: HTTPAuthorizationCreden
                         json_data['organizations'].append(
                             organization.model_dump())
 
+                    # Pass role details to Authentication service
+                    roles = role_manager.get_roles(to_id=owner_id)
+                    for role in roles:
+                        role['_id'] = str(role['_id'])
+                        role['organizationId'] = str(role['organizationId'])
+                        json_data['roles'].append(role)
+
                     response = requests.put(url=f'{env.AUTHENTICATION_SERVICE_URL}auth/',
                                             json=json_data,
                                             headers=headers)
 
                     if response.status_code == HTTPStatus.OK:
-                        return id
+                        return str(organization_id)
 
                 except HTTPException:
                     raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail={

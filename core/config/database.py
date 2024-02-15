@@ -18,3 +18,9 @@ class OrganizationDatabase:
 
     # Set the collection name to 'organization_member'
     organization_member_collection = db['organization_member']
+
+    # Set the collection name to 'role'
+    role_collection = db['role']
+
+    # Set the collection name to 'role_assigned'
+    role_assigned = db['role_assigned']
